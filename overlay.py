@@ -1,12 +1,23 @@
 import sys
 from PyQt5 import QtGui, QtCore, uic
 from PyQt5 import QtWidgets
-from PyQt5.QtWidgets import QMainWindow, QApplication, QRubberBand
+from PyQt5.QtWidgets import QMainWindow, QApplication, QRubberBand, QLabel, QStyle
 from PyQt5.QtCore import QTimer, QPoint, QRect, QSize
 from main import *
 import win32gui
 import ctypes
 import ahk
+from enum import Enum
+from datetime import *
+from time import time
+
+def millis_now():
+    return int(time() * 1000)
+
+class WindowState(Enum):
+    NORMAL = 'normal'
+    SELECT_FISHING_AREA = 'select-fishing-area'
+    WAIT_BOBBER = 'wait-bobber'
 
 
 class MainWindow(QMainWindow):
@@ -17,8 +28,9 @@ class MainWindow(QMainWindow):
             QtCore.Qt.WindowType.FramelessWindowHint |
             QtCore.Qt.WindowType.X11BypassWindowManagerHint
         )
-        self.setWindowOpacity(0.3)
+        self.setWindowOpacity(0.4)
         self.hwnd = wow_hwnd
+        self.state = WindowState.NORMAL
         r = rect
         self.rect1 = rect
         self.setGeometry(r[0], r[1], r[2], r[3])
@@ -31,9 +43,16 @@ class MainWindow(QMainWindow):
         self.hist = []
         self.hist_max = 20
         self.selection = QRect()
+        self.txtStatus = QLabel(self)
+        self.txtStatus.setFixedWidth(400)
+        self.txtStatus.setStyleSheet("color: #ffffff; background-color: black;")
+        self.txtStatus.setText(self.state.name)
         self.rubberBand = QRubberBand(QRubberBand.Shape.Rectangle, self)
         self.origin = QPoint()
         self.ahk = ahk
+        self.wow = ahk.find_window(title=b'World of Warcraft')
+        self.countdown = millis_now()
+        assert self.wow != None
 
 
     def keyPressEvent(self, a0: QtGui.QKeyEvent) -> None:
@@ -41,9 +60,17 @@ class MainWindow(QMainWindow):
             for i, img in enumerate(self.hist):
                 img.save(f'img{str(i).zfill(2)}.jpg')
             QtWidgets.QApplication.instance().exit(0)
+        if a0.key() == QtCore.Qt.Key.Key_S:
+            if self.state == WindowState.NORMAL:
+                self.state = WindowState.SELECT_FISHING_AREA
+                self.txtStatus.setText(self.state.name)
         if a0.key() == QtCore.Qt.Key.Key_0:
             # save frame
-            ahk.key_press()
+            #ahk.key_press()
+            self.hist[-1].save('before.jpg')
+            self.wow.send('3')
+            self.countdown = millis_now()
+            self.state = WindowState.WAIT_BOBBER
             # init bobber wait
             # after a period of time save another frame
             # find bobber coord
@@ -52,36 +79,45 @@ class MainWindow(QMainWindow):
 
 
     def mousePressEvent(self, event):
-        if event.button() == QtCore.Qt.MouseButton.LeftButton:
-            self.origin = QPoint(event.pos())
-            self.rubberBand.setGeometry(QRect(self.origin, QSize()))
-            self.rubberBand.show()        
+        if self.state == WindowState.SELECT_FISHING_AREA:
+            if event.button() == QtCore.Qt.MouseButton.LeftButton:
+                self.origin = QPoint(event.pos())
+                self.rubberBand.setGeometry(QRect(self.origin, QSize()))
+                self.rubberBand.show()        
     
     
     def mouseMoveEvent(self, event):
-        if not self.origin.isNull():
-            self.rubberBand.setGeometry(QRect(self.origin, event.pos()).normalized())
+        if self.state == WindowState.SELECT_FISHING_AREA:
+            if not self.origin.isNull():
+                self.rubberBand.setGeometry(QRect(self.origin, event.pos()).normalized())
 
   
     def mouseReleaseEvent(self, event):
-        if event.button() == QtCore.Qt.MouseButton.LeftButton:
-            self.selection = self.rubberBand.geometry()
-            print(self.selection)
-            self.rubberBand.hide()
+        if self.state == WindowState.SELECT_FISHING_AREA:
+            if event.button() == QtCore.Qt.MouseButton.LeftButton:
+                self.state = WindowState.NORMAL
+                self.txtStatus.setText(self.state.name)
+                self.selection = self.rubberBand.geometry()
+                #print(self.selection)
+                self.rubberBand.hide()
 
 
     def update(self):
         screen = QtWidgets.QApplication.primaryScreen()
-        r = self.rect1
         screenshot = screen.grabWindow(self.hwnd)
         self.lbl.resize(screenshot.size())
         self.lbl.setPixmap(screenshot)
         self.timer_timeout_cnt += 1
-        sub = screenshot.copy(self.selection)
-        print(self.selection)
-        self.hist.append(sub)
-        while len(self.hist) > self.hist_max:
-            self.hist.pop(0)
+        if not self.selection.isEmpty():
+            sub = screenshot.copy(self.selection)
+            self.hist.append(sub)
+            while len(self.hist) > self.hist_max:
+                self.hist.pop(0)
+
+            if self.state == WindowState.WAIT_BOBBER:
+                if millis_now() - self.countdown > 3000:
+                    self.hist[-1].save('after.jpg')
+                    self.state = WindowState.NORMAL
 
 
 if __name__ == '__main__':
