@@ -58,7 +58,7 @@ class MainWindow(QMainWindow):
     def keyPressEvent(self, a0: QtGui.QKeyEvent) -> None:
         if a0.key() == QtCore.Qt.Key.Key_Escape:
             for i, img in enumerate(self.hist):
-                img.save(f'img{str(i).zfill(2)}.jpg')
+                img.save(f'img{str(i).zfill(2)}.png')
             QtWidgets.QApplication.instance().exit(0)
         if a0.key() == QtCore.Qt.Key.Key_S:
             if self.state == WindowState.NORMAL:
@@ -67,7 +67,7 @@ class MainWindow(QMainWindow):
         if a0.key() == QtCore.Qt.Key.Key_0:
             # save frame
             #ahk.key_press()
-            self.hist[-1].save('before.jpg')
+            self.hist[-1].save('before.png')
             self.wow.send('3')
             self.countdown = millis_now()
             self.state = WindowState.WAIT_BOBBER
@@ -116,7 +116,7 @@ class MainWindow(QMainWindow):
 
             if self.state == WindowState.WAIT_BOBBER:
                 if millis_now() - self.countdown > 3000:
-                    self.hist[-1].save('after.jpg')
+                    self.hist[-1].save('after.png')
                     self.state = WindowState.NORMAL
 
 
