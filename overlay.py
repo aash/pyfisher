@@ -1,8 +1,9 @@
 import sys
 from PyQt5 import QtGui, QtCore, uic
 from PyQt5 import QtWidgets
-from PyQt5.QtWidgets import QMainWindow, QApplication, QRubberBand, QLabel, QStyle
-from PyQt5.QtCore import QTimer, QPoint, QRect, QSize
+from PyQt5.QtWidgets import QMainWindow, QApplication, QRubberBand, QLabel
+from PyQt5.QtCore import QTimer, QPoint, QRect, QSize, QRectF
+from PyQt5.QtGui import QImage, QPainter, QColor
 from main import *
 import win32gui
 import ctypes
@@ -10,6 +11,8 @@ import ahk
 from enum import Enum
 from datetime import *
 from time import time
+import numpy as np
+import cv2
 
 def millis_now():
     return int(time() * 1000)
@@ -19,6 +22,15 @@ class WindowState(Enum):
     SELECT_FISHING_AREA = 'select-fishing-area'
     WAIT_BOBBER = 'wait-bobber'
 
+
+def convertQImageToMat(img: QImage) -> np.ndarray: 
+    '''  Converts a QImage into an opencv MAT format  '''
+    img = img.convertToFormat(4)
+    w, h = img.width(), img.height()
+    ptr = img.bits()
+    ptr.setsize(img.byteCount())
+    arr = np.array(ptr).reshape(h, w, 4)
+    return arr
 
 class MainWindow(QMainWindow):
     def __init__(self, rect = (0, 0 , 220, 32), wow_hwnd = 0, ahk = ahk.AHK()):
@@ -52,6 +64,7 @@ class MainWindow(QMainWindow):
         self.ahk = ahk
         self.wow = ahk.find_window(title=b'World of Warcraft')
         self.countdown = millis_now()
+        self.coord = None
         assert self.wow != None
 
 
@@ -83,7 +96,7 @@ class MainWindow(QMainWindow):
             if event.button() == QtCore.Qt.MouseButton.LeftButton:
                 self.origin = QPoint(event.pos())
                 self.rubberBand.setGeometry(QRect(self.origin, QSize()))
-                self.rubberBand.show()        
+                self.rubberBand.show()
     
     
     def mouseMoveEvent(self, event):
@@ -118,6 +131,32 @@ class MainWindow(QMainWindow):
                 if millis_now() - self.countdown > 3000:
                     self.hist[-1].save('after.png')
                     self.state = WindowState.NORMAL
+
+                    import cv2 as cv
+                    import matplotlib.pyplot as plt
+                    #img = cv.imread('after.png')
+
+                    img = convertQImageToMat(self.hist[-1].toImage())
+                    img = cv.cvtColor(img, cv.COLOR_RGB2BGR)
+                    hls = cv.cvtColor(img, cv.COLOR_RGB2HLS)
+                    hue = hls[:,:,0]
+                    r, mask = cv.threshold(hue, 0, 10, cv.THRESH_OTSU + cv.THRESH_BINARY_INV)
+                    nb_components, output, stats, centroids = cv.connectedComponentsWithStats(mask, connectivity=8)
+                    for i, c in enumerate(centroids):
+                        if stats[i][cv.CC_STAT_AREA] > 400:
+                            cc = tuple(map(int, c))
+                            self.coord = (cc[0] + self.selection.left(), cc[1] + self.selection.top())
+                            c = self.coord
+                            #cv.circle(img, tuple(map(int, c)), radius=7, color=(255,255,255), thickness=1)
+            if self.coord and type(self.coord) == tuple:
+                d = 3
+                p = QPainter()
+                p.begin(self.lbl.pixmap())
+                c = self.coord
+                p.setPen(QColor(255, 0, 0))
+                p.drawEllipse(c[0], c[1], d, d)
+                p.end()
+
 
 
 if __name__ == '__main__':
