@@ -1,0 +1,4 @@
+img*.png
+after.png
+before.png
+__pycache__/**
