@@ -126,32 +126,6 @@ class MainWindow(QMainWindow):
         self.mut = QMutex()
         self.tt = None
         self.msk = None
-        '''
-        self.setGeometry(100,100, 640, 480)
-        l = QVBoxLayout()
-        self.l3 = QLabel()
-        self.p = QPixmap()
-        self.p.load("after.png")
-        self.p = self.p.scaled(640, 480)
-        self.l3.setPixmap(self.p)
-        self.l3.resize(self.p.size())
-        l.addWidget(self.l3)
-        w = QWidget()
-        w.setLayout(l)
-        self.setCentralWidget(w)
-        self.l1 = QLabel()
-        self.l1.setText("label1")
-        self.l1.setFixedWidth(400)
-        self.l1.setFixedHeight(15)
-        self.l2 = QLabel()
-        self.l2.setText("label2")
-        self.l2.setFixedHeight(15)
-        self.l2.setFixedWidth(400)
-        l.addWidget(self.l1, QtCore.Qt.AlignmentFlag.AlignTop)
-        l.addSpacing(1)
-        l.addWidget(self.l2, QtCore.Qt.AlignmentFlag.AlignTop)
-        l.addStretch(1)
-        '''
         assert self.wow != None
 
     def keyPressEvent(self, a0: QtGui.QKeyEvent) -> None:
