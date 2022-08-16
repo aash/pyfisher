@@ -14,7 +14,7 @@ from datetime import *
 from time import time
 import numpy as np
 import cv2
-from yolov5.minimal import BobberDetector
+from minimal import BobberDetector
 from PyQt5.QtCore import pyqtSlot, QRunnable, QThreadPool, pyqtSignal, QObject, QMutexLocker, QMutex
 
 def millis_now():
@@ -120,7 +120,7 @@ class MainWindow(QMainWindow):
         self.countdown = millis_now()
         self.coord = None
         self.pcoord = None
-        self.det = BobberDetector()
+        self.det = BobberDetector('yolov5/best.pt')
         self.rect = None
         self.threadpool = QThreadPool()
         self.mut = QMutex()
