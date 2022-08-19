@@ -1,10 +1,6 @@
 name: TelegramNotifier
 
-on:
-  discussion:
-    types: [create, edit, delete]
-  discussion_comment:
-    types: [create, edit, delete]
+on: [discussion, discussion_comment]
 
 jobs:
   notifyTelegram:
