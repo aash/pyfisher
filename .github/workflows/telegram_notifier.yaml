@@ -1,6 +1,10 @@
 name: TelegramNotifier
 
-on: [ discussion ]
+on:
+  discussion:
+    types: *
+  discussion_comment:
+    types: *
 
 jobs:
   notifyTelegram:
