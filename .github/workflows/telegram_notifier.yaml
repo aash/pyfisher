@@ -2,9 +2,9 @@ name: TelegramNotifier
 
 on:
   discussion:
-    types: *
+    types: [create, edit, delete]
   discussion_comment:
-    types: *
+    types: [create, edit, delete]
 
 jobs:
   notifyTelegram:
