@@ -1,6 +1,6 @@
 name: TelegramNotifier
 
-on: [discussion, discussion_comment]
+on: [discussion, discussion_comment, issues, issue_comment]
 
 jobs:
   notifyTelegram:
