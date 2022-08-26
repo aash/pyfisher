@@ -69,14 +69,105 @@ class VSegDir(Enum):
 class OCR:
 
     def __init__(self):
-        pass
+        model_exists = os.path.exists(DIGITS_MODEL_FILENAME)
+        if model_exists:
+            self.clf = load(DIGITS_MODEL_FILENAME)
+        else:
+            raise NotImplementedError
+            # data, target = prepare_train_data()
+            # clf = svm.SVC(gamma=0.001)
+            # clf.fit(data, target)
+            # dump(clf, DIGITS_MODEL_FILENAME)
 
     def segmentize(self, mat: np.ndarray,
                    vdir: VSegDir = VSegDir.TOP_TO_BOTTOM,
                    hdir: HSegDir = HSegDir.LEFT_TO_RIGHT):
-        for ln, (ln_img, y0, y1) in enumerate(segment_line_in_image(l)):
-            for cn, char_img, x0, x1 in enumerate(segment_chars_in_line(ln_img)):
+        for ln, (ln_img, y0, y1) in enumerate(segment_line_in_image(mat, vdir)):
+            for cn, (char_img, x0, x1) in enumerate(segment_chars_in_line(ln_img, hdir)):
                 yield char_img, ln, cn, x0, y0, x1, y1
+
+    def __call__(self, l, mode='single-line', vdir=VSegDir.TOP_TO_BOTTOM, hdir=HSegDir.LEFT_TO_RIGHT):
+
+        def segment_single_line():
+            for img, ln, cn, _, _, _, _ in self.segmentize(l, vdir=vdir, hdir=hdir):
+                if ln > 0:
+                    return
+                yield img
+        
+        match mode:
+            case 'single-line':
+                zipped = [(t, to_model_format(t)) for t in segment_single_line()]
+        orig_char_imgs, char_imgs = zip(*zipped)
+        # filter out dots, or images where count of non-zero pixels is small
+        char_imgs = [i for i in char_imgs if np.count_nonzero(i) > 10]
+        chars_cnt = len(char_imgs)
+        imgdata = np.array(char_imgs)
+        imgdata = imgdata.reshape((chars_cnt, -1))
+        predicted = self.clf.predict(imgdata)
+
+        # errors correction
+
+        def get_gaps_count(digit: np.ndarray) -> int:
+            img_pad = np.pad(digit, 1)
+            img_inv_pad = np.invert(img_pad)
+            filled, _ = fill_gaps(img_pad, conn=4)
+            n, o, _, _ = cv2.connectedComponentsWithStats(img_inv_pad, connectivity=4)
+            cnt_gaps = -1
+            for j in range(n):
+                c = (o == j).astype(np.uint8)
+                if c.max() != 255:
+                    c *= 255
+                masked = cv2.bitwise_and(c, c, mask=filled)
+                if np.count_nonzero(masked) != 0:
+                    cnt_gaps += 1
+            return cnt_gaps
+
+
+        def get_gap_count_mapping(ch: str):
+            assert len(ch) == 1
+            m = list(map(lambda x: GAPS_COUNT[x],CONFUSIONS[ch]))
+            if len(set(m)) == len(CONFUSIONS[ch]):
+                return dict(zip(m, CONFUSIONS[ch]))
+            else:
+                return None
+
+        # insert dots if any, because if image indexing is broken otherwise
+        predicted = list(predicted)
+        for index, img in enumerate(orig_char_imgs):
+            if np.count_nonzero(img) <= 10:
+                predicted.insert(index, '.')
+
+        assert len(predicted) == len(orig_char_imgs)
+
+        # eliminate confusions by analysing connected components
+        for i, ch in enumerate(predicted):
+            if ch in CONFUSIONS:
+                img = orig_char_imgs[i]
+                cnt_gaps = get_gaps_count(img)
+                if GAPS_COUNT[ch] != cnt_gaps:
+                    m = get_gap_count_mapping(ch)
+                    if m and cnt_gaps in m:
+                        predicted[i] = m[cnt_gaps]
+                    else:
+                        pass
+        
+        return predicted
+
+
+def to_model_format(char_img):
+    ch, cw = char_img.shape
+    padded = np.zeros(DIGITS_MODEL_IMAGE_SHAPE, dtype=np.uint8)
+    lh = DIGITS_MODEL_IMAGE_SHAPE[0]
+    x0 = (lh - cw) // 2
+    x1 = x0 + cw
+    y0 = (lh - ch) // 2
+    y1 = y0 + ch
+    padded[y0:y1, x0:x1] = char_img
+    padded = padded.astype(np.float64) / DIGITS_MODEL_FEATURE_MAX_VALUE
+    padded = resize(np.pad(padded, 1), DIGITS_MODEL_IMAGE_SHAPE)
+    assert padded.shape[:2] == DIGITS_MODEL_IMAGE_SHAPE
+    assert padded.max() <= DIGITS_MODEL_FEATURE_MAX_VALUE
+    return padded
 
 def alpha_blend(image, overlay):
     srcRGB = image[...,:3]
@@ -202,6 +293,11 @@ if __name__ == '__main__':
     overlay = np.zeros((h, w, 4), dtype=np.uint8)
 
 
+    ocr = OCR()
+    print(''.join(ocr(l, vdir=VSegDir.BOTTOM_TO_TOP)))
+    sys.exit()
+
+
     def draw_rect(overlay, x0, y0, x1, y1):
         overlay[y0:y1, x0:x1] = (255, 0, 0, 128)
 
@@ -221,104 +317,111 @@ if __name__ == '__main__':
         return padded
 
     full_txt = ''
-    for li, (ln_img, y0, y1) in enumerate(segment_line_in_image(l, VSegDir.TOP_TO_BOTTOM)):
-        lh = ln_img.shape[0]
-        char_imgs = []
-        orig_char_imgs = []
-        for char_img, x0, x1 in segment_chars_in_line(ln_img, HSegDir.LEFT_TO_RIGHT):
-            #print(f'char: {x0}:{x1}')
-            draw_rect(overlay, x0, y0, x1, y1)
-            # skip dot char, it has small amount if non-zero pixels
-            if np.count_nonzero(char_img) < 9:
-                continue
-            if 'show_char_images' in locals():
-                imgs.append(char_img)
-                lbls.append('')
-            orig_char_imgs.append(char_img)
-            char_imgs.append(to_model_format(char_img))
-        chars_cnt = len(char_imgs)
-        imgdata = np.array(char_imgs)
-        imgdata = imgdata.reshape((chars_cnt, -1))
-        predicted = clf.predict(imgdata)
+    ocr = OCR()
+    
+    # char_imgs = [to_model_format(t[0]) for t in ocr.segmentize(l, vdir=VSegDir.BOTTOM_TO_TOP) if np.count_nonzero(t[0]) > 10]
+    zipped = [(t[0], to_model_format(t[0])) for t in ocr.segmentize(l, vdir=VSegDir.TOP_TO_BOTTOM) if np.count_nonzero(t[0]) > 10]
+    orig_char_imgs, char_imgs = zip(*zipped)
+    chars_cnt = len(char_imgs)
+    imgdata = np.array(char_imgs)
+    imgdata = imgdata.reshape((chars_cnt, -1))
+    predicted = clf.predict(imgdata)
 
-        # eliminate confusions by analysing connected components
-        def get_gaps_count(digit: np.ndarray) -> int:
-            img_pad = np.pad(digit, 1)
-            img_inv_pad = np.invert(img_pad)
-            filled, _ = fill_gaps(img_pad, conn=4)
-            n, o, _, _ = cv2.connectedComponentsWithStats(img_inv_pad, connectivity=4)
-            cnt_gaps = -1
-            for j in range(n):
-                c = (o == j).astype(np.uint8)
-                if c.max() != 255:
-                    c *= 255
-                masked = cv2.bitwise_and(c, c, mask=filled)
-                if np.count_nonzero(masked) != 0:
-                    cnt_gaps += 1
-            return cnt_gaps
+    # eliminate confusions by analysing connected components
+    def get_gaps_count(digit: np.ndarray) -> int:
+        img_pad = np.pad(digit, 1)
+        img_inv_pad = np.invert(img_pad)
+        filled, _ = fill_gaps(img_pad, conn=4)
+        n, o, _, _ = cv2.connectedComponentsWithStats(img_inv_pad, connectivity=4)
+        cnt_gaps = -1
+        for j in range(n):
+            c = (o == j).astype(np.uint8)
+            if c.max() != 255:
+                c *= 255
+            masked = cv2.bitwise_and(c, c, mask=filled)
+            if np.count_nonzero(masked) != 0:
+                cnt_gaps += 1
+        return cnt_gaps
 
 
-        def get_gap_count_mapping(ch: str):
-            assert len(ch) == 1
-            m = list(map(lambda x: GAPS_COUNT[x],CONFUSIONS[ch]))
-            if len(set(m)) == len(CONFUSIONS[ch]):
-                return dict(zip(m, CONFUSIONS[ch]))
-            else:
-                return None
+    def get_gap_count_mapping(ch: str):
+        assert len(ch) == 1
+        m = list(map(lambda x: GAPS_COUNT[x],CONFUSIONS[ch]))
+        if len(set(m)) == len(CONFUSIONS[ch]):
+            return dict(zip(m, CONFUSIONS[ch]))
+        else:
+            return None
 
-        for i, ch in enumerate(predicted):
-            if ch in CONFUSIONS:
-                img = orig_char_imgs[i]
-                cnt_gaps = get_gaps_count(img)
-                if GAPS_COUNT[ch] != cnt_gaps:
-                    # imgs.append(img)
-                    # lbls.append(f"err: {ch} g{cnt_gaps}")
-                    m = get_gap_count_mapping(ch)
-                    if m and cnt_gaps in m:
-                        predicted[i] = m[cnt_gaps]
-                        # print('correction', ch, m[cnt_gaps])
-                    else:
-                        pass
-                        # print('could not find correction', ch)
+    # for i, ch in enumerate(predicted):
+    #     if ch in CONFUSIONS:
+    #         img = orig_char_imgs[i]
+    #         cnt_gaps = get_gaps_count(img)
+    #         if GAPS_COUNT[ch] != cnt_gaps:
+    #             # imgs.append(img)
+    #             # lbls.append(f"err: {ch} g{cnt_gaps}")
+    #             m = get_gap_count_mapping(ch)
+    #             if m and cnt_gaps in m:
+    #                 predicted[i] = m[cnt_gaps]
+    #                 # print('correction', ch, m[cnt_gaps])
+    #             else:
+    #                 pass
+    #                 # print('could not find correction', ch)
 
-        st = ''.join(predicted)
-        #st = st[:1] + '.' + st[1:]
-        full_txt += st + '\n'
-        #print(st)
+    full_txt = ''.join(predicted)
+    #st = st[:1] + '.' + st[1:]
+    #full_txt += st + '\n'
+    #print(st)
 
-        if 'show_line_imgs' in locals():
-            imgs.append(ln_img)
-            lbls.append(st)
-        if 'break_at_first_line' in locals():
-            break
-    assert 'li' in locals()
-    lines_cnt = li + 1
-    print(f'lines: {lines_cnt}')
+    # if 'show_line_imgs' in locals():
+    #     imgs.append(ln_img)
+    #     lbls.append(st)
+    # if 'break_at_first_line' in locals():
+    #     break
+    # assert 'li' in locals()
+    # len(char_imgs)
+    # lines_cnt = li + 1
+    # print(f'lines: {lines_cnt}')
 
-    blend = alpha_blend(rgba, overlay)
-    if 'show_blend' in locals():
-        imgs.append(blend)
-        lbls.append('blend')
+    # blend = alpha_blend(rgba, overlay)
+    # if 'show_blend' in locals():
+    #     imgs.append(blend)
+    #     lbls.append('blend')
 
     # todo: compare to true data
+
+
     txt_file_name = f'{test_file_name}.txt'
     if os.path.exists(txt_file_name):
         with open(txt_file_name) as f:
             expected_txt = f.read()
 
-        actual = full_txt.strip(' \n').split('\n')
-        expected = expected_txt.replace('.', '').strip(' \n').split('\n')
+        #actual = full_txt.strip(' \n')
 
-        errs = 0
-        for i, (a, e) in enumerate(zip(actual, expected)):
-            if a != e:
-                print(f'{i} line,', end='')
-            l = list(filter(None, [f'[{j}]{ac}/{ec}' for j, (ac, ec) in enumerate(zip(a, e)) if ac != ec]))
-            print(*l, sep=', ', end='')
-            errs += len(l)
-            if len(l):
-                print()
+        expected = expected_txt.replace('\n', '').replace('.', '').replace(' ', '')
+        if len(full_txt) != len(expected):
+            print('different length')
+        else:
+            if expected != full_txt:
+                cnt = 0
+                for i, (e, a) in enumerate(zip(expected, full_txt)):
+                    cnt += 1
+                    print(i, e, a)
+                    if cnt > 10:
+                        break
 
+        # actual = full_txt.strip(' \n').split('\n')
+        # expected = expected_txt.replace('.', '').strip(' \n').split('\n')
+
+        # errs = 0
+        # for i, (a, e) in enumerate(zip(actual, expected)):
+        #     if a != e:
+        #         print(f'{i} line,', end='')
+        #     l = list(filter(None, [f'[{j}]{ac}/{ec}' for j, (ac, ec) in enumerate(zip(a, e)) if ac != ec]))
+        #     print(*l, sep=', ', end='')
+        #     errs += len(l)
+        #     if len(l):
+        #         print()
+        errs = sum(map(lambda x: int(x[0] != x[1]),zip(expected, full_txt)))
         print(f'errors: {errs}')
 
     if 'imgs' in locals():
